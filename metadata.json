@@ -1,0 +1,5 @@
+{
+  "name": "PlantoGen APM - Gestão de Sobreaviso",
+  "description": "Aplicação profissional para gestão de escalas de sobreaviso com exportação automática para o padrão APM.",
+  "requestFramePermissions": []
+}

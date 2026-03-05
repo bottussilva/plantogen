@@ -39,6 +39,7 @@ import { Howl, Howler } from 'howler';
 import { cn } from './lib/utils';
 import { Professional, Shift, AreaData } from './types';
 import { logger } from './utils/logger';
+import { supabase } from './lib/supabase';
 
 const sanitize = (str: string) => str.replace(/[<>]/g, '');
 
@@ -66,12 +67,35 @@ export default function App() {
     pcn: 'Nome do PCN',
     horasSobreaviso: '15:45'
   });
-  const [professionals, setProfessionals] = useState<Professional[]>([
-    { id: '1', name: 'Mauricio Da Silva Pozzatto', matricula: 'B40293', specialty: 'Arquiteto', color: 'bg-blue-500' },
-    { id: '2', name: 'Renato Petersen', matricula: 'B36639', specialty: 'Arquiteto', color: 'bg-emerald-500' },
-    { id: '3', name: 'Miguel Neumann', matricula: 'B36979', specialty: 'Apoio', color: 'bg-violet-500' },
-  ]);
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
+
+  React.useEffect(() => {
+    async function loadData() {
+      // 1. Fetch Area Configs
+      const { data: area } = await supabase.from('area_data').select('*').limit(1).single();
+      if (area) {
+        setAreaData({
+          unidade: area.unidade,
+          sigla: area.sigla,
+          gerencia: area.gerencia,
+          area: area.area,
+          descricao: area.descricao,
+          pcn: area.pcn,
+          horasSobreaviso: area.horas_sobreaviso
+        });
+      }
+
+      // 2. Fetch Professionals
+      const { data: profs } = await supabase.from('professionals').select('*');
+      if (profs) setProfessionals(profs);
+
+      // 3. Fetch Shifts
+      const { data: allShifts } = await supabase.from('shifts').select('*');
+      if (allShifts) setShifts(allShifts);
+    }
+    loadData();
+  }, []);
   const [newProfName, setNewProfName] = useState('');
   const [newProfMatricula, setNewProfMatricula] = useState('');
   const [newProfSpecialty, setNewProfSpecialty] = useState('');
@@ -104,13 +128,15 @@ export default function App() {
   }, [currentDate]);
 
   const monthShifts = useMemo(() => {
-    return shifts.filter(s =>
-      s.date.getMonth() === currentDate.getMonth() &&
-      s.date.getFullYear() === currentDate.getFullYear()
-    );
+    return shifts.filter(s => {
+      const parts = s.date.split('-'); // YYYY-MM-DD
+      const sYear = parseInt(parts[0], 10);
+      const sMonth = parseInt(parts[1], 10) - 1; // JS months are 0-indexed
+      return sMonth === currentDate.getMonth() && sYear === currentDate.getFullYear();
+    });
   }, [shifts, currentDate]);
 
-  const addProfessional = () => {
+  const addProfessional = async () => {
     if (!newProfName.trim() || !newProfMatricula.trim()) {
       setError("Nome e matrícula são obrigatórios.");
       logger.warn("Tentativa de adicionar profissional sem nome ou matrícula.");
@@ -120,59 +146,109 @@ export default function App() {
     const cleanMatricula = sanitize(newProfMatricula);
     const cleanSpecialty = sanitize(newProfSpecialty || 'Geral');
 
-    const newProf: Professional = {
-      id: Math.random().toString(36).substr(2, 9),
+    const newProf = {
       name: cleanName,
       matricula: cleanMatricula,
       specialty: cleanSpecialty,
       color: COLORS[professionals.length % COLORS.length]
     };
-    setProfessionals([...professionals, newProf]);
-    setNewProfName('');
-    setNewProfMatricula('');
-    setNewProfSpecialty('');
-  };
 
-  const removeProfessional = (id: string) => {
-    setProfessionals(professionals.filter(p => p.id !== id));
-    setShifts(shifts.filter(s => s.professionalId !== id));
-  };
+    // Insert into Supabase
+    const { data, error } = await supabase.from('professionals').insert([newProf]).select();
 
-  const toggleShift = (date: Date, type: 'diurno' | 'noturno', profId: string | null) => {
-    const existingIndex = shifts.findIndex(s =>
-      isSameDay(s.date, date) && s.type === type
-    );
-
-    if (existingIndex >= 0) {
-      const newShifts = [...shifts];
-      if (profId === null) {
-        newShifts.splice(existingIndex, 1);
-      } else {
-        newShifts[existingIndex] = { ...newShifts[existingIndex], professionalId: profId };
-      }
-      setShifts(newShifts);
-    } else if (profId !== null) {
-      setShifts([...shifts, { id: Math.random().toString(36).substr(2, 9), date, type, professionalId: profId }]);
+    if (error) {
+      setError("Erro ao cadastrar profissional.");
+      sfx.erro.play();
+    } else if (data && data.length > 0) {
+      setProfessionals([...professionals, data[0] as Professional]);
+      setNewProfName('');
+      setNewProfMatricula('');
+      setNewProfSpecialty('');
     }
   };
 
-  const clearMonthShifts = () => {
-    setShifts(shifts.filter(s =>
-      s.date.getMonth() !== currentDate.getMonth() ||
-      s.date.getFullYear() !== currentDate.getFullYear()
-    ));
+  const removeProfessional = async (id: string) => {
+    // Delete from Supabase (Cascade delete on shifts is handled by DB)
+    const { error } = await supabase.from('professionals').delete().eq('id', id);
+    if (!error) {
+      setProfessionals(professionals.filter(p => p.id !== id));
+      setShifts(shifts.filter(s => s.professionalId !== id));
+    } else {
+      setError("Erro ao remover profissional.");
+    }
   };
 
-  const autoGenerate = () => {
+  const toggleShift = async (date: Date, type: 'diurno' | 'noturno', profId: string | null) => {
+    // Note: Due to date/string conversion issues, ensure format is correct for Supabase YYYY-MM-DD
+    const dateStr = format(date, 'yyyy-MM-dd');
+
+    const existingIndex = shifts.findIndex(s =>
+      s.date === dateStr && s.type === type
+    );
+
+    if (existingIndex >= 0) {
+      if (profId === null) {
+        // Delete shift
+        const shiftId = shifts[existingIndex].id;
+        const { error } = await supabase.from('shifts').delete().eq('id', shiftId);
+        if (!error) {
+          const newShifts = [...shifts];
+          newShifts.splice(existingIndex, 1);
+          setShifts(newShifts);
+        }
+      } else {
+        // Update shift
+        const shiftId = shifts[existingIndex].id;
+        const { data, error } = await supabase.from('shifts').update({ professional_id: profId }).eq('id', shiftId).select();
+        if (!error && data) {
+          const newShifts = [...shifts];
+          newShifts[existingIndex] = data[0] as Shift;
+          // Re-map column format back to our interface format (handling snake_case difference if any, though ideally types should match exactly)
+          newShifts[existingIndex].professionalId = data[0].professional_id;
+          setShifts(newShifts);
+        }
+      }
+    } else if (profId !== null) {
+      // Insert shift
+      const newShift = { date: dateStr, type, professional_id: profId };
+      const { data, error } = await supabase.from('shifts').insert([newShift]).select();
+      if (!error && data) {
+        const returnedShift = data[0] as Shift;
+        returnedShift.professionalId = data[0].professional_id;
+        setShifts([...shifts, returnedShift]);
+      }
+    }
+  };
+
+  const clearMonthShifts = async () => {
+    // Collect IDs of shifts in the current month
+    const idsToDelete = monthShifts.map(s => s.id);
+    if (idsToDelete.length === 0) return;
+
+    const { error } = await supabase.from('shifts').delete().in('id', idsToDelete);
+
+    if (!error) {
+      setShifts(shifts.filter(s => {
+        const sDate = new Date(s.date + 'T00:00:00'); // parsing the internal YYYY-MM-DD back to verify
+        return sDate.getMonth() !== currentDate.getMonth() || sDate.getFullYear() !== currentDate.getFullYear();
+      }));
+    }
+  };
+
+  const autoGenerate = async () => {
     if (professionals.length === 0) return;
-    const newShifts = [...shifts];
+
+    const shiftsToInsert: any[] = [];
+    const simulatedShifts = [...shifts]; // to keep track internally while looping
 
     daysInMonth.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
       ['diurno', 'noturno'].forEach(type => {
-        const existing = newShifts.find(s => isSameDay(s.date, day) && s.type === type);
+        const existing = simulatedShifts.find(s => s.date === dateStr && s.type === type);
+
         if (!existing) {
           const otherShiftType = type === 'diurno' ? 'noturno' : 'diurno';
-          const otherShift = newShifts.find(s => isSameDay(s.date, day) && s.type === otherShiftType);
+          const otherShift = simulatedShifts.find(s => s.date === dateStr && s.type === otherShiftType);
 
           let availableProfs = professionals;
           if (otherShift) {
@@ -182,19 +258,34 @@ export default function App() {
           const pool = availableProfs.length > 0 ? availableProfs : professionals;
           const randomProf = pool[Math.floor(Math.random() * pool.length)];
 
-          newShifts.push({
-            id: Math.random().toString(36).substr(2, 9),
-            date: day,
+          const newShift = { date: dateStr, type: type as 'diurno' | 'noturno', professional_id: randomProf.id };
+          shiftsToInsert.push(newShift);
+
+          simulatedShifts.push({
+            id: 'temp-' + Math.random(),
+            date: dateStr,
             type: type as 'diurno' | 'noturno',
             professionalId: randomProf.id
           });
         }
       });
     });
-    setShifts(newShifts);
+
+    if (shiftsToInsert.length > 0) {
+      const { data, error } = await supabase.from('shifts').insert(shiftsToInsert).select();
+      if (!error && data) {
+        const newFormattedShifts = data.map(dbShift => ({
+          id: dbShift.id,
+          date: dbShift.date,
+          type: dbShift.type,
+          professionalId: dbShift.professional_id
+        }));
+        setShifts([...shifts, ...newFormattedShifts]);
+      }
+    }
   };
 
-  const applyPeriod = () => {
+  const applyPeriod = async () => {
     if (!periodProfId || !periodStart || !periodEnd) return;
 
     const start = startOfDay(new Date(periodStart + 'T00:00:00'));
@@ -203,31 +294,50 @@ export default function App() {
     if (isAfter(start, end)) return;
 
     const intervalDays = eachDayOfInterval({ start, end });
-    const newShifts = [...shifts];
+
+    const shiftsToInsert: any[] = [];
+    const idsToDelete: string[] = []; // those that need updating (replace logic via delete+insert is safer for multiple updates or we can do upserts if db constraints permit)
 
     intervalDays.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
       const types: ('diurno' | 'noturno')[] =
         periodType === 'ambos' ? ['diurno', 'noturno'] : [periodType];
 
       types.forEach(type => {
-        const existingIndex = newShifts.findIndex(s =>
-          isSameDay(s.date, day) && s.type === type
+        const existingIndex = shifts.findIndex(s =>
+          s.date === dateStr && s.type === type
         );
 
         if (existingIndex >= 0) {
-          newShifts[existingIndex] = { ...newShifts[existingIndex], professionalId: periodProfId };
-        } else {
-          newShifts.push({
-            id: Math.random().toString(36).substr(2, 9),
-            date: day,
-            type,
-            professionalId: periodProfId
-          });
+          idsToDelete.push(shifts[existingIndex].id);
         }
+
+        shiftsToInsert.push({ date: dateStr, type, professional_id: periodProfId });
       });
     });
 
-    setShifts(newShifts);
+    // We do delete matching conflicts + insert new batch to avoid constraint errors
+    if (idsToDelete.length > 0) {
+      await supabase.from('shifts').delete().in('id', idsToDelete);
+    }
+
+    if (shiftsToInsert.length > 0) {
+      const { data, error } = await supabase.from('shifts').insert(shiftsToInsert).select();
+
+      if (!error && data) {
+        const newInsertedShifts = data.map(dbShift => ({
+          id: dbShift.id,
+          date: dbShift.date,
+          type: dbShift.type,
+          professionalId: dbShift.professional_id
+        }));
+
+        // update local state
+        const remainingShifts = shifts.filter(s => !idsToDelete.includes(s.id));
+        setShifts([...remainingShifts, ...newInsertedShifts]);
+      }
+    }
+
     setActiveTab('escala'); // Switch back to calendar view
   };
 
@@ -374,7 +484,7 @@ export default function App() {
               <CalendarIcon size={32} />
             </div>
             <h1 className="text-2xl font-black text-slate-800">PlantoGen APM</h1>
-            <p className="text-slate-500 text-sm mt-2">Gestão de Sobreaviso Profissional</p>
+            <p className="text-slate-500 text-sm mt-2 font-medium">Gestão de Sobreaviso com Persistência em Nuvem</p>
           </div>
 
           <div className="space-y-6">
@@ -472,9 +582,10 @@ export default function App() {
               </div>
               <div className="space-y-4 text-slate-600 text-sm leading-relaxed">
                 <p>1. <strong>Objetivo</strong>: Organizar a escala de sobreaviso da sua área de forma eficiente.</p>
-                <p>2. <strong>Equipe</strong>: Cadastre todos os profissionais com suas matrículas corretas.</p>
-                <p>3. <strong>Escala</strong>: Você pode preencher dia a dia ou usar a aba "Período" para cadastros rápidos.</p>
-                <p>4. <strong>Exportação</strong>: O arquivo gerado segue o padrão APM para processamento automático.</p>
+                <p>2. <strong>Persistência</strong>: Seus dados são salvos automaticamente no banco de dados (Supabase).</p>
+                <p>3. <strong>Equipe</strong>: Cadastre todos os profissionais com suas matrículas corretas.</p>
+                <p>4. <strong>Escala</strong>: Você pode preencher dia a dia ou usar a aba "Período" para cadastros rápidos.</p>
+                <p>5. <strong>Exportação</strong>: O arquivo gerado segue o padrão APM para processamento automático.</p>
               </div>
               <button
                 onClick={() => setShowRules(false)}
@@ -848,6 +959,32 @@ export default function App() {
                       className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all font-medium"
                     />
                   </div>
+
+                  <button
+                    onClick={async () => {
+                      const payload = {
+                        id: 1, // Assume single row config
+                        unidade: areaData.unidade,
+                        sigla: areaData.sigla,
+                        gerencia: areaData.gerencia,
+                        area: areaData.area,
+                        descricao: areaData.descricao,
+                        pcn: areaData.pcn,
+                        horas_sobreaviso: areaData.horasSobreaviso
+                      };
+                      // We use insert with upsert flag just to make sure
+                      const { error } = await supabase.from('area_data').upsert(payload);
+                      if (error) {
+                        setError("Erro ao salvar configurações.");
+                        sfx.erro.play();
+                      } else {
+                        sfx.click.play();
+                      }
+                    }}
+                    className="w-full bg-indigo-600 text-white py-3 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 mt-4"
+                  >
+                    Salvar Configurações
+                  </button>
                 </div>
 
                 <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 flex gap-3">
@@ -886,7 +1023,8 @@ export default function App() {
               ))}
 
               {daysInMonth.map((day) => {
-                const dayShifts = monthShifts.filter(s => isSameDay(s.date, day));
+                const dateStr = format(day, 'yyyy-MM-dd');
+                const dayShifts = monthShifts.filter(s => s.date === dateStr);
                 const diurno = dayShifts.find(s => s.type === 'diurno');
                 const noturno = dayShifts.find(s => s.type === 'noturno');
 

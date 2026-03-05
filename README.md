@@ -19,8 +19,30 @@ O PlantoGen APM é uma aplicação web responsiva projetada para facilitar a ges
 
 ## 🚀 Procedimentos de Implantação
 A aplicação pode ser implantada seguindo os pré-requisitos:
-- Node.js 20+
-- Docker/Podman
+- Podman / Docker
+- Instância Supabase (Self-hosted ou Cloud)
+
+## ☁️ Integração com Supabase (Persistência)
+
+O PlantoGen APM agora suporta persistência de dados real-time utilizando o **Supabase**. Siga os passos abaixo para configurar sua instância:
+
+### 1. Configuração do Banco de Dados
+Execute o script SQL localizado em `supabase/migrations/20260305000000_schema.sql` no seu editor SQL do Supabase. Isso criará as tabelas necessárias:
+- `professionals`: Cadastro da equipe.
+- `shifts`: Escalas de sobreaviso.
+- `area_data`: Configurações da unidade/área.
+
+### 2. Variáveis de Ambiente
+Crie um arquivo `.env.local` na raiz do projeto com as credenciais da sua instância:
+```env
+VITE_SUPABASE_URL=https://seu-projeto.supabase.co
+VITE_SUPABASE_ANON_KEY=sua-chave-anon-publica
+```
+
+### 3. Segurança (Essencial)
+- **Rls (Row Level Security)**: Habilite RLS nas tabelas para controlar o acesso.
+- **Anon Key**: A chave `anon` é segura para uso no frontend, mas garanta que as políticas de RLS estejam configuradas corretamente.
+- **Segurança de Chaves**: Nunca faça commit do arquivo `.env.local`. Ele já está incluído no `.gitignore`.
 
 ### Ambiente Local (Node.js)
 ```bash
@@ -112,6 +134,8 @@ Após alteração, basta executar a rotina de Build/Re-build dos ambientes expli
 
 
 ## 📂 Dicionário de Arquivos
+- `src/lib/supabase.ts`: Inicialização do cliente Supabase.
+- `supabase/migrations/`: Scripts SQL para estruturação do banco de dados.
 - `src/App.tsx`: Lógica principal e interface da aplicação.
 - `src/utils/logger.ts`: Utilitário de log para rastreamento de eventos e erros.
 - `src/tests/`: Testes automatizados (Vitest).
@@ -131,6 +155,11 @@ O projeto segue a convenção **Conventional Commits**:
 Este software está licenciado sob a **GNU GPLv3**.
 
 ## 📅 Changelog
+### [1.1.0] - 2026-03-05
+- Integração com Supabase para persistência de dados em tempo real.
+- Refatoração de estado para suporte a operações assíncronas.
+- Adição de scripts de migração SQL.
+
 ### [1.0.0] - 2026-03-02
 - Implementação inicial conforme requisitos APM.
 - Adição de infraestrutura Docker.

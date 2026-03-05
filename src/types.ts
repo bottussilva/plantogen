@@ -18,7 +18,7 @@ export interface AreaData {
 
 export interface Shift {
   id: string;
-  date: Date;
+  date: string; // Changed to string for Supabase compatibility (YYYY-MM-DD)
   professionalId: string | null;
   type: 'diurno' | 'noturno';
 }

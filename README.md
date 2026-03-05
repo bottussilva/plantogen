@@ -22,17 +22,94 @@ A aplicação pode ser implantada seguindo os pré-requisitos:
 - Node.js 20+
 - Docker/Podman
 
-### Ambiente Local
+### Ambiente Local (Node.js)
 ```bash
 npm install
 npm run dev
 ```
 
 ### Docker / Podman
+O aplicativo foi estruturado para suportar nativamente containers, podendo utilizar as mesmas instruções em Docker ou Podman:
 ```bash
+# Construção da imagem do container
 docker build -t plantogen .
+podman build -t plantogen .
+
+# Execução do container em porta padrão
 docker run -p 8080:8080 plantogen
+podman run -p 8080:8080 plantogen
 ```
+
+### Docker Compose
+Para executar a versão utilizando o orquestrador padrão do Docker:
+```bash
+# Sobe o container em background (-d)
+docker-compose up -d
+
+# Derrubar a aplicação
+docker-compose down
+```
+
+### Kubernetes (k8s)
+Execute a aplicação num cluster Kubernetes através do manifest fornecido:
+```bash
+# Caso esteja utilizando minikube, realizar build interno (opcional)
+# minikube image build -t plantogen:latest .
+
+kubectl apply -f k8s-deployment.yaml
+# Recuperar IP caso LoadBalancer ou expor a rota de serviço:
+kubectl get services
+```
+
+### Google Cloud Run
+Para o Google Cloud Run, a imagem deve ser publicada no Artifact Registry da GCP. O projeto exige a CLI do Google (`gcloud`) configurada e logada (`gcloud auth login`).
+```bash
+# Submeta o deploy do source local para a sua GCP
+gcloud run deploy plantogen --source . \
+  --platform managed \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --port 8080
+```
+
+### Google App Engine
+Para realizar o deploy na App Engine, garanta que o arquivo `app.yaml` esteja no projeto e a conta autenticada na GCP. Habilite a API do GAE no Console de Administração.
+```bash
+# Faça o deploy da aplicação NodeJS
+gcloud app deploy app.yaml
+```
+
+### AWS Lambda
+A aplicação gera arquivos estáticos (`npm run build`). Embora lambdas sejam para funções de execução assíncrona/temporária, pode-se servi-los em lambdas pelo `serverless-http` num pacote zipado, ou via Web Adapter, mas nativamente sugere-se a hospedagem dos estáticos via AWS S3 acoplado a um CloudFront se a intenção for Serverless. Ou, encapsular o container num Lambda usando AWS ECR e função do tipo *Image*.
+
+```bash
+# Para Container em Lambda (requer CLI instalada e conta configurada):
+aws ecr create-repository --repository-name plantogen
+docker tag plantogen:latest <conta-aws>.dkr.ecr.<regiao>.amazonaws.com/plantogen:latest
+docker push <conta-aws>.dkr.ecr.<regiao>.amazonaws.com/plantogen:latest
+# Crie a função definindo o tipo e URI da Imagem criada no console da AWS Lambda.
+```
+
+## 🛠 Orientações para Ajustes e Customizações
+
+Esta aplicação APM é flexível e permite uma série de ajustes locais de jogabilidade e operação para adequação local ("White-labeling"):
+
+**Constantes, Cores e Tipos:**
+Configurações como horas sobreaviso padrão, nome de unidade, siglas da empresa e opções padrão podem ser alteradas sem prejudicar a lógica. Todas são definidas no código-fonte, principalmente em `src/App.tsx` e `src/types/index.ts`. Para customizar as turmas, períodos ou cores de especialidade, modifique os arrays/enumerações associados.
+
+*Exemplo: Adicionando nova Especialidade em Profissionais*
+1. Localize os enums em `src/types` ou diretamente nas constantes onde as especialidades ("Suporte", "Implantação", "Sistemas") aparecem.
+2. Adicione a nova especialidade.
+3. Modifique as opções da UI em `App.tsx`:
+```tsx
+  <select>
+    <option value="Sistemas">Sistemas</option>
+    <!-- Adicione a sua: -->
+    <option value="Redes">Redes</option>
+  </select>
+```
+Após alteração, basta executar a rotina de Build/Re-build dos ambientes explicitados acima (Docker, Cloud, NPM).
+
 
 ## 📂 Dicionário de Arquivos
 - `src/App.tsx`: Lógica principal e interface da aplicação.
